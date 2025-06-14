@@ -1,0 +1,290 @@
+import cv2
+import numpy as np
+import pandas as pd
+from pdf2image import convert_from_path
+from tqdm import tqdm
+from io import StringIO
+import base64
+import os
+import re
+
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+class TableExtractor:
+    def __init__(self, model_name: str = 'gpt:gpt-4o-mini', temperature: int = 0.7, print_logs: bool = False):
+        self.temperature = temperature
+        self.model_name = model_name
+        self.messages = [
+            SystemMessage(content="""
+            Extract and intelligently restructure the table from the image into a meaningful, flat Markdown table format following these requirements:
+
+            ANALYSIS PHASE:
+            - Identify the table's hierarchical structure and parent-child relationships
+            - Determine which cells are parent categories and which are subcategories
+            - Map out the complete hierarchy to understand data groupings
+
+            RESTRUCTURING STRATEGY:
+            - Create separate columns for each level of hierarchy (e.g., "Main Category", "Sub Category")
+            - CRITICAL: Replicate parent category values for ALL child rows that belong to that parent
+            - If a parent category has multiple subcategories, the parent name must appear in every row for those subcategories
+            - Create explicit columns for each hierarchical level rather than leaving parent cells blank
+
+            PARENT CELL REPLICATION RULES:
+            - When a parent category spans multiple child rows, repeat the parent category name in each child row
+            - Do not leave parent category cells blank - every row must be a complete, standalone record
+            - If parent categories have values (like totals), create separate rows for parent-level data
+            - Ensure no row depends on previous rows to understand its category membership
+
+            COLUMN DESIGN:
+            - Structure: [Main Category] | [Sub Category] | [Year1] | [Year2] | etc.
+            - Every row must have values in all category columns (no blank category cells)
+            - Parent categories should be repeated verbatim for all their children
+            - Use consistent naming and avoid abbreviations in category columns
+
+            DATA HANDLING:
+            - Preserve all numerical values exactly, including parentheses for negative values
+            - Maintain original formatting (commas, decimals, brackets)
+            - If parent rows contain summary data, include them as separate rows
+            - Each row must be independently interpretable
+
+            OUTPUT FORMAT:
+            - Standard Markdown table with proper alignment
+            - Every row must be a complete record with all category information filled
+            - Must be directly convertible to CSV for analysis
+            - Structure should enable grouping and filtering by any category level
+
+            RESPONSE RULES:
+            - Output ONLY the restructured markdown table
+            - No explanations, code blocks, or additional text
+            - If extraction/restructuring is impossible, respond with exactly: 'NP'
+
+            Remember: Every row must contain the full categorical path - never leave parent category cells blank when they apply to child rows.
+            Think: How can this table be redesigned to maximize analytical value while preserving all original information?
+            """
+            ),
+        ]
+        self.print_logs = print_logs
+
+    def __extract_tables_images(self, file_path, dpi=300, min_table_area=5000):
+        """
+        Extracts tables from each page of the given PDF.
+
+        Args:
+            file_path (str): Path to the PDF file.
+            dpi (int): Resolution for rendering PDF pages.
+            min_table_area (int): Minimum contour area to qualify as a table.
+
+        Returns:
+            list[np.ndarray]: List of cropped table images (BGR arrays).
+        """
+        if self.print_logs:
+            print("Starting: Extracting Table Images")
+
+        pages = convert_from_path(file_path, dpi=dpi)
+
+        tables = []
+        for page in tqdm(pages):
+            img = cv2.cvtColor(np.array(page), cv2.COLOR_RGB2BGR)
+
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, bw = cv2.threshold(
+                gray, 0, 255,
+                cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU
+            )
+
+            # Morphological line detection
+            horiz_kernel = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (img.shape[1]//15, 1)
+            )
+            vert_kernel  = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (1, img.shape[0]//15)
+            )
+            horiz_lines = cv2.morphologyEx(
+                bw, cv2.MORPH_OPEN, horiz_kernel, iterations=2
+            )
+            vert_lines  = cv2.morphologyEx(
+                bw, cv2.MORPH_OPEN, vert_kernel, iterations=2
+            )
+
+            # Combine masks & find contours
+            mask = cv2.add(horiz_lines, vert_lines)
+            contours, _ = cv2.findContours(
+                mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            # Crop detected table regions
+            for cnt in contours:
+                x, y, w, h = cv2.boundingRect(cnt)
+                if w * h >= min_table_area:
+                    table_img = img[y:y+h, x:x+w]
+                    tables.append(table_img)
+
+        if self.print_logs:
+            print("Done: Extracting Table Images")
+
+        return tables
+    
+    def __extract_csv(self, prompt: HumanMessage) -> str:
+        """
+        Extracts table in CSV format from image using LLM.
+        
+        Args:
+            prompt: Prompt to be sent to the LLM.
+        
+        Returns:
+            str: Extracted table in CSV format.
+        """
+        if self.model_name.startswith("gemini:"):
+            model_name = self.model_name.replace("gemini:", "", 1)
+            try:
+                client = ChatGoogleGenerativeAI(model=model_name, temperature=self._temperature, thinking_budget=0)
+            except:
+                client = ChatGoogleGenerativeAI(model=model_name)
+        elif self.model_name.startswith("gpt:"):
+            model_name = self.model_name.replace("gpt:", "", 1)
+            try:
+                client = ChatOpenAI(model=model_name, temperature=self._temperature)
+            except:
+                client = ChatOpenAI(model=model_name)
+        else:
+            raise ValueError(f"Unsupported model name: {model_name}")
+        
+        messages = self.messages + [prompt]
+        response = client.invoke(messages)
+
+        if response and response.content != 'NP':
+            if self.print_logs:
+                print(response.content)
+            return response.content
+        else:
+            raise ValueError("Couldn't extract CSV from Image")
+    
+    def __md_table_to_csv(self, md_table: str):
+        """
+        Convert a Markdown table (given as one big string) into a CSV string.
+        Assumes a well-formed table with header, separator, and rows.
+        """
+        lines = [line for line in md_table.splitlines() if line.strip()]
+        
+        # Find the separator row (---|---|--- style)
+        sep_idx = next(
+            (i for i, line in enumerate(lines)
+            if re.match(r'^\s*\|?[:\- ]+\|[:\- \|]+$', line)),
+            None
+        )
+        if sep_idx is None:
+            raise ValueError("No Markdown table separator found")
+        
+        header_line = lines[sep_idx - 1]
+        data_lines  = lines[sep_idx + 1:]
+        
+        def parse_row(line: str) -> list[str]:
+            cells = [cell.strip() for cell in line.strip().split('|')]
+            return cells[1:-1]  # drop the empty edge cells
+        
+        # Build CSV lines
+        csv_rows = []
+        hdr = parse_row(header_line)
+        csv_rows.append(','.join(hdr))
+        
+        for row in data_lines:
+            if not row.strip().startswith('|'):
+                break
+            cells = parse_row(row)
+            # quote any cell containing commas
+            safe_cells = [f'"{c}"' if ',' in c else c for c in cells]
+            csv_rows.append(','.join(safe_cells))
+        
+        return '\n'.join(csv_rows)
+    
+    
+    def __encode_image_to_base64(self, image: np.ndarray) -> str:
+        """
+        Encodes an image to a base64 string.
+        
+        Args:
+            image (np.ndarray): Image to be encoded.
+
+        Returns:
+            str: Base64 encoded string of the image.
+        """
+        _, buffer = cv2.imencode('.jpg', image)
+        base64_image = base64.b64encode(buffer).decode('utf-8')
+        return base64_image
+    
+    def __update_messages(self, latest_schema: str):
+        """
+        Updates the messages list with the schema of the latest generated DataFrame/CSV
+
+        Args:
+            latest_schema (str): Schema of the latest generated DataFrame/CSV
+        """
+        self.messages = self.messages[:1]
+        new_human_message = HumanMessage(
+            content=f"Below is the DataFrame schema of the last extracted CSV. You may use this information if necesssay (e.g maintain uniformity in naming convention or anything) or disregard it. \n\n{latest_schema}"
+        )
+        self.messages.append(new_human_message)
+
+    
+    def extract_tables(self, file_path: str, save: bool = False, max_tries: int = 3, print_logs: bool = False) -> list[pd.DataFrame]:
+        """
+        Extracts tables from the given PDF file.
+        
+        Args:
+            file_path (str): Path to the PDF file.
+            save (bool): Whether or not to save the save the tables as CSV
+            max_tries (int): No. of times the program should attempt to extract the table in valid CSV format
+            print_logs (bool): Whether or not to print the intermediate outputs or messages (errors or progress messages).
+
+        Returns:
+            list[pd.DataFrame]: List of DataFrames containing extracted tables.
+        """
+        self.print_logs = print_logs
+        tables_images = self.__extract_tables_images(file_path)
+        dfs = []
+
+        for i, table_image in tqdm(enumerate(tables_images), total=len(tables_images)):
+            counter = 0
+            while True:
+                try:
+                    prompt = HumanMessage(
+                        content=[
+                            {"type": "text", "text": "Extract the table from this image in valid and complete Markdown Table format."},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{self.__encode_image_to_base64(table_image)}"},
+                            },
+                        ]
+                    )
+                    output = self.__extract_csv(prompt)
+                    output = self.__md_table_to_csv(output)
+                    df = pd.read_csv(StringIO(output))
+                    dfs.append(df)
+
+                    if not df.empty:
+                        schema = df.dtypes
+                        self.__update_messages(latest_schema=schema)
+                    break
+
+                except Exception as e:
+                    if self.print_logs:
+                        print(f"Error Converting Image {i}: {e}")
+                    if counter + 1 >= max_tries:
+                        dfs.append(None)
+                        break
+                    else:
+                        counter += 1
+            
+
+        if save:
+            filename = os.path.basename(file_path).split(".")[0]
+            cwd = os.getcwd()
+            os.makedirs(os.path.join(cwd, "output", filename), exist_ok=True)
+
+            for i, df in enumerate(dfs):
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    df.to_csv(os.path.join(cwd, "output", filename, f"table_{i+1}.csv"), index=False)
+        
+        return dfs

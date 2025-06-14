@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tabulens"
+version = "0.1.0"
+description = "LLM-powered PDF table extractor"
+license = {file = "LICENSE"}
+authors = [{name = "Soumyajit Basu", email = "soumyajit.basu22@gmail.com"}]
+requires-python = ">=3.10"
+
+dependencies = [
+    "langchain==0.3.21",
+    "langchain-google-genai==2.1.4",
+    "langchain-openai==0.3.11",
+    "numpy==1.26.4",
+    "opencv-python==4.10.0.84",
+    "pandas==2.2.3",
+    "pdf2image==1.17.0",
+    "tqdm==4.67.1",
+    "python-dotenv"
+]
+
+[project.scripts]
+tabulens = "tabulens.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/astonishedrobo/tabulens"
