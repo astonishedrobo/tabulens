@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "tabulens"
 version = "0.1.0"
 description = "LLM-powered PDF table extractor"
+readme = "README.md"
 license = {file = "LICENSE"}
 authors = [{name = "Soumyajit Basu", email = "soumyajit.basu22@gmail.com"}]
 requires-python = ">=3.10"
