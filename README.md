@@ -53,19 +53,20 @@ for i, df in enumerate(dataframes):
 
 ### Command Line Interface
 
+To extrach tables:
+
 ```bash
 # OpenAI 
-tabulens --pdf path/to/document.pdf --model gpt:gpt-4o-mini --temperature 0.7 --max_tries 3 --log
+tabulens extract --pdf path/to/document.pdf --model gpt:gpt-4o-mini --temperature 0.7 --max_tries 3 --log
 
 # Gemini
-tabulens --pdf path/to/document.pdf --model gemini:gemini-2.0-flash --temperature 0.7 --max_tries 3 --log
+tabulens extract --pdf path/to/document.pdf --model gemini:gemini-2.0-flash --temperature 0.7 --max_tries 3 --log
 ```
 
 ### CLI Options
 
 * `--pdf`: Path to the PDF file (required)
-* `--model`: Model name (`gpt:gpt-4o-mini`, `gemini:gemini-2.0-flash`, `gpt:gpt-4o`, `gemini:gemini-2.5-flash-preview-05-20`, etc.) [default: `gpt:gpt-4o-mini`]. For OpenAI models, use the prefix `gpt:`, and for Gemini models, use the prefix `gemini:`. 
-⚠️ **Make sure to select models that support image inputs. You can use any of the mentioned examples for convenience.** 
+* `--model`: Model name (`gpt:gpt-4o-mini`, `gemini:gemini-2.0-flash`, `gpt:gpt-4o`, `gemini:gemini-2.5-flash-preview-05-20`, etc.) [default: `gpt:gpt-4o-mini`]. For OpenAI models, use the prefix `gpt:`, and for Gemini models, use the prefix `gemini:`. **(⚠️ Make sure to select models that support image inputs. You can use any of the mentioned examples for convenience.)**
 * `--temperature`: Generation temperature (0.0-1.0) [default: 0.7]
 * `--max_tries`: Maximum retries per table extraction [default: 3] [Increase this value to enhance accuracy, as more attempts allow the system additional opportunities to correctly extract tables.]
 * `--log`: Print detailed logs
