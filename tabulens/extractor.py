@@ -67,7 +67,7 @@ class TableExtractor:
         ]
         self.print_logs = print_logs
 
-    def __extract_tables_images(self, file_path, dpi=300, min_table_area=5000):
+    def __extract_tables_images(self, file_path, dpi=300, min_table_area=5000, pad=5) -> list[np.ndarray]:
         """
         Extracts tables from each page of the given PDF.
 
@@ -75,6 +75,7 @@ class TableExtractor:
             file_path (str): Path to the PDF file.
             dpi (int): Resolution for rendering PDF pages.
             min_table_area (int): Minimum contour area to qualify as a table.
+            pad (int): Extra pixels to pad around each detected table.
 
         Returns:
             list[np.ndarray]: List of cropped table images (BGR arrays).
@@ -89,36 +90,42 @@ class TableExtractor:
             img = cv2.cvtColor(np.array(page), cv2.COLOR_RGB2BGR)
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            _, bw = cv2.threshold(
-                gray, 0, 255,
-                cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU
-            )
+            _, bw = cv2.threshold(gray, 0, 255,
+                                cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
 
             # Morphological line detection
             horiz_kernel = cv2.getStructuringElement(
-                cv2.MORPH_RECT, (img.shape[1]//15, 1)
+                cv2.MORPH_RECT, (img.shape[1] // 15, 1)
             )
-            vert_kernel  = cv2.getStructuringElement(
-                cv2.MORPH_RECT, (1, img.shape[0]//15)
+            vert_kernel = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (1, img.shape[0] // 15)
             )
             horiz_lines = cv2.morphologyEx(
                 bw, cv2.MORPH_OPEN, horiz_kernel, iterations=2
             )
-            vert_lines  = cv2.morphologyEx(
+            vert_lines = cv2.morphologyEx(
                 bw, cv2.MORPH_OPEN, vert_kernel, iterations=2
             )
 
-            # Combine masks & find contours
+            # Combine and Close tiny gaps
             mask = cv2.add(horiz_lines, vert_lines)
+            close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+            mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
+                                        close_kernel, iterations=1)
+
             contours, _ = cv2.findContours(
-                mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
 
             # Crop detected table regions
             for cnt in contours:
                 x, y, w, h = cv2.boundingRect(cnt)
                 if w * h >= min_table_area:
-                    table_img = img[y:y+h, x:x+w]
+                    x0 = max(x - pad, 0)
+                    y0 = max(y - pad, 0)
+                    x1 = min(x + w + pad, img.shape[1])
+                    y1 = min(y + h + pad, img.shape[0])
+                    table_img = img[y0:y1, x0:x1]
                     tables.append(table_img)
 
         if self.print_logs:
