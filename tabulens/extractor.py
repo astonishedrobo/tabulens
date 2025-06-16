@@ -66,6 +66,26 @@ class TableExtractor:
             ),
         ]
         self.print_logs = print_logs
+        self.__init_llm_client()
+
+    def __init_llm_client(self):
+        """
+        Initializes the LLM client based on the model name.
+        """
+        if self.model_name.startswith("gemini:"):
+            model_name = self.model_name.replace("gemini:", "", 1)
+            try:
+                self.client = ChatGoogleGenerativeAI(model=model_name, temperature=self.temperature, thinking_budget=0)
+            except:
+                self.client = ChatGoogleGenerativeAI(model=model_name)
+        elif self.model_name.startswith("gpt:"):
+            model_name = self.model_name.replace("gpt:", "", 1)
+            try:
+                self.client = ChatOpenAI(model=model_name, temperature=self.temperature)
+            except:
+                self.client = ChatOpenAI(model=model_name)
+        else:
+            raise ValueError(f"Unsupported model name: {model_name}")
 
     def __extract_tables_images(self, file_path, dpi=300, min_table_area=5000, pad=5) -> list[np.ndarray]:
         """
@@ -143,23 +163,9 @@ class TableExtractor:
         Returns:
             str: Extracted table in CSV format.
         """
-        if self.model_name.startswith("gemini:"):
-            model_name = self.model_name.replace("gemini:", "", 1)
-            try:
-                client = ChatGoogleGenerativeAI(model=model_name, temperature=self._temperature, thinking_budget=0)
-            except:
-                client = ChatGoogleGenerativeAI(model=model_name)
-        elif self.model_name.startswith("gpt:"):
-            model_name = self.model_name.replace("gpt:", "", 1)
-            try:
-                client = ChatOpenAI(model=model_name, temperature=self._temperature)
-            except:
-                client = ChatOpenAI(model=model_name)
-        else:
-            raise ValueError(f"Unsupported model name: {model_name}")
         
         messages = self.messages + [prompt]
-        response = client.invoke(messages)
+        response = self.client.invoke(messages)
 
         if response and response.content != 'NP':
             if self.print_logs:
