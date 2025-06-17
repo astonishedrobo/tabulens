@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tabulens"
-version = "0.1.4"
+version = "0.1.5"
 description = "LLM-powered PDF table extractor"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -15,6 +15,7 @@ dependencies = [
     "langchain==0.3.21",
     "langchain-google-genai==2.1.4",
     "langchain-openai==0.3.11",
+    "langchain-groq==0.3.2",
     "numpy==1.26.4",
     "opencv-python==4.10.0.84",
     "pandas==2.2.3",

@@ -9,11 +9,16 @@ import os
 import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables.retry import RunnableRetry
+from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
+
 
 class TableExtractor:
-    def __init__(self, model_name: str = 'gpt:gpt-4o-mini', temperature: int = 0.7, print_logs: bool = False):
+    def __init__(self, model_name: str = 'gpt:gpt-4o-mini', temperature: int = 0.7, verbose: bool = False, rate_limiter: bool = False, rate_limiter_params: dict = None):
         self.temperature = temperature
         self.model_name = model_name
         self.messages = [
@@ -65,7 +70,17 @@ class TableExtractor:
             """
             ),
         ]
-        self.print_logs = print_logs
+        self.verbose = verbose
+
+        if not isinstance(rate_limiter_params, dict) and rate_limiter_params is not None:
+            raise TypeError("rate_limiter_params must be a dictionary or None")
+        self.rate_limiter_params = {**{"requests_per_second": 0.5, "check_every_n_seconds": 0.1, "max_bucket_size": 1}, **(rate_limiter_params or {})}
+
+        if rate_limiter:
+            self.rate_limiter = InMemoryRateLimiter(**self.rate_limiter_params)
+        else:
+            self.rate_limiter = None
+
         self.__init_llm_client()
 
     def __init_llm_client(self):
@@ -75,19 +90,25 @@ class TableExtractor:
         if self.model_name.startswith("gemini:"):
             model_name = self.model_name.replace("gemini:", "", 1)
             try:
-                self.client = ChatGoogleGenerativeAI(model=model_name, temperature=self.temperature, thinking_budget=0)
+                self.client = ChatGoogleGenerativeAI(model=model_name, temperature=self.temperature, thinking_budget=0, rate_limiter=self.rate_limiter)
             except:
-                self.client = ChatGoogleGenerativeAI(model=model_name)
+                self.client = ChatGoogleGenerativeAI(model=model_name, rate_limiter=self.rate_limiter)
         elif self.model_name.startswith("gpt:"):
             model_name = self.model_name.replace("gpt:", "", 1)
             try:
-                self.client = ChatOpenAI(model=model_name, temperature=self.temperature)
+                self.client = ChatOpenAI(model=model_name, temperature=self.temperature, rate_limiter=self.rate_limiter)
             except:
-                self.client = ChatOpenAI(model=model_name)
+                self.client = ChatOpenAI(model=model_name, rate_limiter=self.rate_limiter)
+        elif self.model_name.startswith("groq:"):
+            model_name = self.model_name.replace("groq:", "", 1)
+            try:
+                self.client = ChatGroq(model=model_name, temperature=self.temperature, rate_limiter=self.rate_limiter)
+            except:
+                self.client = ChatGroq(model=model_name, rate_limiter=self.rate_limiter)
         else:
             raise ValueError(f"Unsupported model name: {model_name}")
 
-    def __extract_tables_images(self, file_path, dpi=300, min_table_area=5000, pad=5) -> list[np.ndarray]:
+    def __extract_tables_images(self, file_path: str, dpi: int = 300, min_table_area: int = 5000, pad: int = 5) -> list[np.ndarray]:
         """
         Extracts tables from each page of the given PDF.
 
@@ -100,7 +121,7 @@ class TableExtractor:
         Returns:
             list[np.ndarray]: List of cropped table images (BGR arrays).
         """
-        if self.print_logs:
+        if self.verbose:
             print("Starting: Extracting Table Images")
 
         pages = convert_from_path(file_path, dpi=dpi)
@@ -148,33 +169,33 @@ class TableExtractor:
                     table_img = img[y0:y1, x0:x1]
                     tables.append(table_img)
 
-        if self.print_logs:
+        if self.verbose:
             print("Done: Extracting Table Images")
 
         return tables
     
-    def __extract_csv(self, prompt: HumanMessage) -> str:
+    def __call_llm(self, prompt: HumanMessage) -> str:
         """
-        Extracts table in CSV format from image using LLM.
+        Extracts table in Markdown format from image using LLM.
         
         Args:
             prompt: Prompt to be sent to the LLM.
         
         Returns:
-            str: Extracted table in CSV format.
+            str: Extracted table in Markdown format.
         """
         
         messages = self.messages + [prompt]
         response = self.client.invoke(messages)
 
         if response and response.content != 'NP':
-            if self.print_logs:
+            if self.verbose:
                 print(response.content)
             return response.content
         else:
             raise ValueError("Couldn't extract CSV from Image")
     
-    def __md_table_to_csv(self, md_table: str):
+    def __md_table_to_csv(self, md_table: str) -> str:
         """
         Convert a Markdown table (given as one big string) into a CSV string.
         Assumes a well-formed table with header, separator, and rows.
@@ -240,8 +261,36 @@ class TableExtractor:
         )
         self.messages.append(new_human_message)
 
-    
-    def extract_tables(self, file_path: str, save: bool = False, max_tries: int = 3, print_logs: bool = False) -> list[pd.DataFrame]:
+    def __extract_df_from_image(self, table_image: np.ndarray) -> pd.DataFrame:
+        """
+        Extracts a DataFrame from the given table image using LLM.
+        
+        Args:
+            table_image (np.ndarray): Image of the table to be processed.
+
+        Returns:
+            pd.DataFrame: Extracted DataFrame.
+        """
+        prompt = HumanMessage(
+            content=[
+                {"type": "text", "text": "Extract the table from this image in valid and complete Markdown Table format."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{self.__encode_image_to_base64(table_image)}"},
+                },
+            ]
+        )
+        output = self.__call_llm(prompt)
+        output = self.__md_table_to_csv(output)
+
+        try:
+            df = pd.read_csv(StringIO(output))
+        except Exception as e:
+            raise ValueError(f"Error converting image to DataFrame: {e}")
+        
+        return df
+
+    def extract_tables(self, file_path: str, save: bool = False, max_tries: int = 3, verbose: bool = False) -> list[pd.DataFrame]:
         """
         Extracts tables from the given PDF file.
         
@@ -249,46 +298,33 @@ class TableExtractor:
             file_path (str): Path to the PDF file.
             save (bool): Whether or not to save the save the tables as CSV
             max_tries (int): No. of times the program should attempt to extract the table in valid CSV format
-            print_logs (bool): Whether or not to print the intermediate outputs or messages (errors or progress messages).
+            verbose (bool): Whether or not to print the intermediate outputs or messages (errors or progress messages).
 
         Returns:
             list[pd.DataFrame]: List of DataFrames containing extracted tables.
         """
-        self.print_logs = print_logs
+        self.verbose = verbose
         tables_images = self.__extract_tables_images(file_path)
+
+        runnable = RunnableLambda(lambda img: self.__extract_df_from_image(img))
+        runnable_retry = RunnableRetry(
+            bound = runnable,
+            max_attempt_number = max_tries,
+        )
         dfs = []
 
         for i, table_image in tqdm(enumerate(tables_images), total=len(tables_images)):
-            counter = 0
-            while True:
-                try:
-                    prompt = HumanMessage(
-                        content=[
-                            {"type": "text", "text": "Extract the table from this image in valid and complete Markdown Table format."},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/jpeg;base64,{self.__encode_image_to_base64(table_image)}"},
-                            },
-                        ]
-                    )
-                    output = self.__extract_csv(prompt)
-                    output = self.__md_table_to_csv(output)
-                    df = pd.read_csv(StringIO(output))
-                    dfs.append(df)
+            try:
+                
+                df = runnable_retry.invoke(table_image)
+                dfs.append(df)
+                if not df.empty:
+                    self.__update_messages(latest_schema=df.dtypes)
 
-                    if not df.empty:
-                        schema = df.dtypes
-                        self.__update_messages(latest_schema=schema)
-                    break
-
-                except Exception as e:
-                    if self.print_logs:
-                        print(f"Error Converting Image {i}: {e}")
-                    if counter + 1 >= max_tries:
-                        dfs.append(None)
-                        break
-                    else:
-                        counter += 1
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error Converting Table {i} After Max Attempts ({max_tries}): {e}")
+                dfs.append(None)
             
 
         if save:

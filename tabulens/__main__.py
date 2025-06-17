@@ -17,7 +17,8 @@ def main() -> None:
     ex.add_argument("--model", default="gpt:gpt-4o-mini")
     ex.add_argument("--temperature", type=float, default=0.7)
     ex.add_argument("--max_tries", type=int, default=3)
-    ex.add_argument("--log", action="store_true")
+    ex.add_argument("--verbose", action="store_true")
+    ex.add_argument("--rate_limiter", action="store_true", help="Enable rate limiting for LLM calls")
 
     args = parser.parse_args()
 
@@ -25,12 +26,13 @@ def main() -> None:
         TableExtractor(
             model_name=args.model,
             temperature=args.temperature,
-            print_logs=args.log,
+            verbose=args.verbose,
+            rate_limiter=args.rate_limiter,
         ).extract_tables(
             file_path=args.pdf,
             save=True,
             max_tries=args.max_tries,
-            print_logs=args.log,
+            verbose=args.verbose,
         )
 
 
