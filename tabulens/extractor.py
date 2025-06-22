@@ -126,7 +126,7 @@ class TableExtractor:
             filename="standard/prompts_standard.jsonl",
             revision="standard"
         )
-        prompts = load_dataset("json", data_files={"train": "/home/soumyajit/Documents/pdf-extract/dev-tabulens/tabulens/prompts/prompts_standard.jsonl"}, split="train")
+        prompts = load_dataset("json", data_files=dataset_path, split="train")
         self.__system_messages = {row["node"]: row["system_message"] for row in prompts}        
 
     def __load_yolo_model(self):
