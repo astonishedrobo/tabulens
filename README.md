@@ -113,4 +113,4 @@ Tabulens depends on these excellent open-source projects:
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [Apache License 2.0](LICENSE).
