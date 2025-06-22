@@ -16,11 +16,15 @@ dependencies = [
     "langchain-google-genai==2.1.4",
     "langchain-openai==0.3.11",
     "langchain-groq==0.3.2",
-    "numpy==1.26.4",
-    "opencv-python==4.10.0.84",
-    "pandas==2.2.3",
-    "pdf2image==1.17.0",
-    "tqdm==4.67.1",
+    "numpy>=1.26.4",
+    "opencv-python>=4.10.0.84",
+    "pandas>=2.2.3",
+    "pdf2image>=1.17.0",
+    "tqdm>=4.67.1",
+    "datasets>=3.6.0",
+    "huggingface-hub>=0.33.0",
+    "ultralytics>=8.3.156",
+    "pydantic>=2.10",
     "python-dotenv"
 ]
 
