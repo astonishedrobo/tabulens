@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tabulens"
-version = "0.1.5"
+version = "0.2"
 description = "LLM-powered PDF table extractor"
 readme = "README.md"
 license = {file = "LICENSE"}
