@@ -4,9 +4,10 @@
 
 ## Features
 
-* 🔍 **Automatic Table Detection**: Uses computer vision to identify table regions.
+* 🔍 **Automatic Table Detection**: Uses yolo based detection to identify table regions.
 * 🧠 **Intelligent Restructuring**: Leverages LLMs to understand and restructure hierarchical tables.
 * 📊 **Multiple Output Formats**: Supports CSV and pandas DataFrame outputs.
+* 📄 **Flexible Extraction**: Extract tables from all pages or specific pages of your documents, as needed.
 * 🎯 **High Accuracy**: Combines computer vision preprocessing with LLM analysis for robust extraction.
 * 🔧 **Flexible Models**: Seamlessly integrates with API providers like OpenAI GPT, Google Gemini, and Groq.
 * 📝 **Hierarchy Preservation**: Flattens nested tables while maintaining parent-child relationships.
@@ -18,12 +19,18 @@ From PyPI:
 
 ```bash
 pip install tabulens
+
+# Alternatively if you have uv installed
+uv pip install tabulens
 ```
 
 Or directly from GitHub:
 
 ```bash
 pip install git+https://github.com/astonishedrobo/tabulens.git
+
+# Alternatively if you have uv installed
+uv pip git+https://github.com/astonishedrobo/tabulens.git
 ```
 
 ## Quick Start
@@ -34,7 +41,7 @@ pip install git+https://github.com/astonishedrobo/tabulens.git
 from tabulens import TableExtractor
 
 extractor = TableExtractor(
-    model_name='gpt:gpt-4o-mini', # gemini:gemini-2.0-flash | groq:meta-llama/llama-4-scout-17b-16e-instruct
+    model_name='gpt:gpt-4o', # gemini:gemini-2.0-flash | groq:meta-llama/llama-4-scout-17b-16e-instruct
     temperature=0.7,
     rate_limiter=True,
     rate_limiter_params={
@@ -48,7 +55,9 @@ dfs = extractor.extract_tables(
     file_path='path/to/document.pdf',
     save=True,
     max_tries=3,
-    verbose=True
+    verbose=True, # For console messages (by logger)
+    show_progress=True, # For progress bars
+    page_idx=None, # None (default) for all or [0,1,2]
 )
 
 for i, df in enumerate(dataframes):
