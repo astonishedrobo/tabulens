@@ -247,7 +247,7 @@ class TableExtractor:
             list[np.ndarray]: List of cropped table images (BGR arrays).
         """
         pages = convert_from_path(file_path, dpi=dpi)
-        if pages and isinstance(pages, list):
+        if page_idxs and isinstance(page_idxs, list):
             pages = [pages[int(i)] for i in page_idxs if int(i) < len(pages)]
         pages = [np.array(page) for page in pages]
         tables = []
